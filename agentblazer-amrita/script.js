@@ -14,15 +14,11 @@ const CONFIG = {
   campusName: "Amrita Vishwa Vidyapeetham – Amaravati",
   registrationPrefix: "AB-AMR",
   
-  // NOTE FOR ADMINISTRATOR:
-  // Replace this placeholder with your official Amrita student email domain.
-  // Example: "am.students.amrita.edu" or "amaravati.amrita.edu"
-  collegeEmailDomain: "REPLACE_WITH_OFFICIAL_AMRITA_DOMAIN",
+  // Official Amrita student email domain
+  collegeEmailDomain: "am.students.amrita.edu",
   
-  // NOTE FOR ADMINISTRATOR:
-  // Replace this placeholder with your deployed Google Apps Script Web App URL.
-  // Example: "https://script.google.com/macros/s/AKfycb.../exec"
-  formSubmissionEndpoint: "REPLACE_WITH_GOOGLE_APPS_SCRIPT_URL"
+  // Optional secondary Google Apps Script endpoint (Supabase PostgreSQL is primary)
+  formSubmissionEndpoint: ""
 };
 
 // Branch & Dynamic Section Mapping
@@ -91,23 +87,26 @@ document.addEventListener("DOMContentLoaded", () => {
   checkDevBanner();
 });
 
-// Show development banner if endpoint is not set
+// Show development banner if database is not active
 function checkDevBanner() {
-  const isDefaultDomain = CONFIG.collegeEmailDomain === "REPLACE_WITH_OFFICIAL_AMRITA_DOMAIN";
-  const isDefaultEndpoint = CONFIG.formSubmissionEndpoint === "REPLACE_WITH_GOOGLE_APPS_SCRIPT_URL";
   const devBanner = document.getElementById("dev-banner");
+  if (!devBanner) return;
+
+  const isSupabaseActive = window.AgentblazerDB && window.AgentblazerDB.isSupabaseConfigured();
+  if (isSupabaseActive) {
+    // Database is live and fully connected — hide development warning banner
+    devBanner.style.display = "none";
+    return;
+  }
+
+  const isDefaultDomain = CONFIG.collegeEmailDomain === "REPLACE_WITH_OFFICIAL_AMRITA_DOMAIN";
+  const isDefaultEndpoint = !CONFIG.formSubmissionEndpoint || CONFIG.formSubmissionEndpoint === "REPLACE_WITH_GOOGLE_APPS_SCRIPT_URL";
   
-  if (devBanner && (isDefaultDomain || isDefaultEndpoint)) {
+  if (isDefaultDomain && isDefaultEndpoint) {
     devBanner.style.display = "block";
-    let msg = "Development Mode Active — ";
-    if (isDefaultDomain && isDefaultEndpoint) {
-      msg += "Set collegeEmailDomain and Google Apps Script URL in script.js before production.";
-    } else if (isDefaultDomain) {
-      msg += "Set official collegeEmailDomain in script.js.";
-    } else {
-      msg += "Set Google Apps Script Web App URL in script.js to connect Google Sheets.";
-    }
-    devBanner.textContent = msg;
+    devBanner.textContent = "Local Safeguard Mode Active — Registrations saved to local browser storage.";
+  } else {
+    devBanner.style.display = "none";
   }
 }
 
@@ -498,7 +497,7 @@ function initCharacterCounters() {
       const len = e.target.value.length;
       aiIdeaCounter.textContent = `${len} / 400`;
       if (len > 400) {
-        aiIdeaInput.value = e.target.value.substring(0, 400);
+        e.target.value = e.target.value.substring(0, 400);
         aiIdeaCounter.textContent = "400 / 400";
       }
     });
@@ -530,12 +529,16 @@ function validateCurrentStep() {
     // Check email domain configuration
     const isDomainPlaceholder = CONFIG.collegeEmailDomain === "REPLACE_WITH_OFFICIAL_AMRITA_DOMAIN";
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const isAmritaDomain = 
+      collegeEmailVal.endsWith(`@${CONFIG.collegeEmailDomain}`) ||
+      collegeEmailVal.endsWith(".amrita.edu") ||
+      collegeEmailVal.endsWith("@amrita.edu");
 
     if (!collegeEmailVal || !emailRegex.test(collegeEmailVal)) {
       showFieldError("college-email", "Please enter a valid official Amrita email ID.");
       isValid = false;
-    } else if (!isDomainPlaceholder && !collegeEmailVal.endsWith(`@${CONFIG.collegeEmailDomain}`)) {
-      showFieldError("college-email", `Please enter your official Amrita college email ID (ending with @${CONFIG.collegeEmailDomain}).`);
+    } else if (!isDomainPlaceholder && !isAmritaDomain) {
+      showFieldError("college-email", `Please enter your official Amrita college email ID (ending with @${CONFIG.collegeEmailDomain} or @*.amrita.edu).`);
       isValid = false;
     } else {
       clearFieldError("college-email");
@@ -682,6 +685,7 @@ async function submitRegistration() {
   }
 
   // 1. Generate Registration ID
+  // Random 4-digit code e.g. AB-AMR-4821 or sequence
   const randomFourDigit = Math.floor(1000 + Math.random() * 9000);
   const regId = `${CONFIG.registrationPrefix}-${randomFourDigit}`;
   
@@ -705,8 +709,24 @@ async function submitRegistration() {
     aiAgentIdea: state.formData.aiAgentIdea || "None"
   };
 
-  // Safeguard in localStorage
+  // Always save locally in localStorage as a bulletproof safeguard
   saveRegistrationLocally(payload);
+
+  // 2. Insert into Real Database (Supabase PostgreSQL)
+  let supabaseSaved = false;
+  if (window.AgentblazerDB && window.AgentblazerDB.isSupabaseConfigured()) {
+    try {
+      const dbRes = await window.AgentblazerDB.dbInsertRegistration(payload);
+      if (dbRes && dbRes.success) {
+        supabaseSaved = true;
+        console.info("⚡ Successfully recorded registration in Supabase PostgreSQL:", dbRes);
+      } else if (dbRes && dbRes.error) {
+        console.warn("Supabase returned error:", dbRes.error);
+      }
+    } catch (dbErr) {
+      console.warn("Supabase insert failed, fallback continuing:", dbErr);
+    }
+  }
 
   const isEndpointConfigured = 
     CONFIG.formSubmissionEndpoint && 
@@ -714,12 +734,24 @@ async function submitRegistration() {
     CONFIG.formSubmissionEndpoint.startsWith("http");
 
   if (!isEndpointConfigured) {
-    // Development Mode
+    if (supabaseSaved) {
+      // Successfully saved to Supabase!
+      showSuccessScreen(regId, false);
+      state.isSubmitting = false;
+      if (btnSubmit) {
+        btnSubmit.disabled = false;
+        btnSubmit.innerHTML = `<span>ACTIVATE MY AGENT ⚡</span>`;
+      }
+      return;
+    }
+
+    // Development / Local Mode
     console.info("==================================================");
-    console.info("AGENTBLAZER REGISTRATION CAPTURED (DEV MODE):");
+    console.info("AGENTBLAZER REGISTRATION CAPTURED (LOCAL MODE):");
     console.info(payload);
     console.info("==================================================");
 
+    // Simulate minor network delay for smooth UX
     setTimeout(() => {
       showSuccessScreen(regId, true);
       state.isSubmitting = false;
@@ -731,7 +763,7 @@ async function submitRegistration() {
     return;
   }
 
-  // Production Submission to Google Apps Script
+  // Live Production Submission to Google Apps Script (if also configured)
   try {
     const response = await fetch(CONFIG.formSubmissionEndpoint, {
       method: "POST",
@@ -745,6 +777,7 @@ async function submitRegistration() {
       throw new Error(`Server returned status: ${response.status}`);
     }
 
+    // Success
     showSuccessScreen(regId, false);
   } catch (error) {
     console.error("Submission failed:", error);
@@ -843,6 +876,7 @@ function resetForm() {
   if (successScreen) successScreen.classList.remove("active");
   if (wizardCard) wizardCard.style.display = "block";
 
+  // Scroll back to hero or registration
   const hero = document.getElementById("hero");
   if (hero) hero.scrollIntoView({ behavior: "smooth" });
 }

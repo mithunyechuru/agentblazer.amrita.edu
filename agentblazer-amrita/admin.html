@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script type="module" src="/supabase-client.js"></script>
   <style>
     /* Admin Portal Specific Custom Styles */
     body {
@@ -341,7 +343,10 @@
           <p style="font-size: 0.92rem; color: #64748B;">Complete submissions captured via the Agentblazer onboarding portal.</p>
         </div>
 
-        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+          <button type="button" id="btn-db-settings" class="btn-secondary" style="padding: 10px 16px; font-size: 0.9rem; border: 1.5px solid #0284C7; color: #0284C7; display: flex; align-items: center; gap: 6px;">
+            <span id="db-status-dot">🟡</span> <span id="db-status-label">Supabase Config</span>
+          </button>
           <button type="button" id="btn-add-student-modal" class="btn-primary" style="padding: 10px 18px; font-size: 0.9rem; background: #059669; border-color: #059669;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
             <span>+ Add Student</span>
@@ -620,6 +625,51 @@
     </div>
   </div>
 
+  <!-- ==========================================================================
+       SUPABASE DATABASE CONFIGURATION MODAL
+       ========================================================================== -->
+  <div id="db-settings-modal-overlay" class="profile-drawer-overlay">
+    <div class="profile-card-modal" style="max-width: 580px;">
+      <div class="profile-header" style="background: #0F172A;">
+        <div>
+          <span style="font-size: 0.8rem; background: rgba(56, 189, 248, 0.2); color: #38BDF8; padding: 3px 8px; border-radius: 4px; font-weight: 700;">REAL DATABASE</span>
+          <h3 style="font-size: 1.35rem; font-weight: 900; margin-top: 6px;">Supabase Database Connection</h3>
+          <p style="font-size: 0.82rem; color: #94A3B8; margin: 0;">Connect your PostgreSQL table to sync and persist registrations in cloud storage.</p>
+        </div>
+        <button type="button" id="btn-close-db-modal" style="background: transparent; border: none; color: #FFFFFF; font-size: 1.5rem; cursor: pointer;">✕</button>
+      </div>
+
+      <form id="db-settings-form" class="profile-body">
+        <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 14px; margin-bottom: 18px; font-size: 0.84rem; color: #334155;">
+          <strong>Quick Setup Instructions:</strong>
+          <ol style="margin: 6px 0 0 18px; padding: 0; line-height: 1.5;">
+            <li>In your Supabase Dashboard, create a table by running <code>supabase-schema.sql</code>.</li>
+            <li>Copy the <strong>Project URL</strong> and <strong>Anon Public Key</strong> from <em>Project Settings → API</em>.</li>
+            <li>Paste them below and click <strong>"Save & Sync"</strong>.</li>
+          </ol>
+        </div>
+
+        <div style="margin-bottom: 14px;">
+          <label style="font-size: 0.78rem; font-weight: 700; color: #032D60; display: block; margin-bottom: 4px;" for="cfg-supabase-url">Supabase Project URL</label>
+          <input type="url" id="cfg-supabase-url" class="input-text" placeholder="https://your-project.supabase.co" style="width: 100%; padding: 10px 12px; font-size: 0.88rem; font-family: var(--font-mono);">
+        </div>
+
+        <div style="margin-bottom: 18px;">
+          <label style="font-size: 0.78rem; font-weight: 700; color: #032D60; display: block; margin-bottom: 4px;" for="cfg-supabase-anon-key">Supabase Public Anon Key</label>
+          <input type="password" id="cfg-supabase-anon-key" class="input-text" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6..." style="width: 100%; padding: 10px 12px; font-size: 0.88rem; font-family: var(--font-mono);">
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #E2E8F0; padding-top: 14px;">
+          <button type="button" id="btn-test-db-connection" class="btn-secondary" style="padding: 8px 16px;">Test Connection</button>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" id="btn-cancel-db-modal" class="btn-secondary" style="padding: 8px 16px;">Cancel</button>
+            <button type="submit" class="btn-primary" style="padding: 8px 20px; background: #0284C7; border-color: #0284C7;">Save & Sync</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Toast Notification -->
   <div id="admin-toast" style="display: none; position: fixed; bottom: 24px; right: 24px; background: #032D60; color: #FFFFFF; padding: 12px 20px; border-radius: 8px; font-size: 0.88rem; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.2); z-index: 999;">
     Notification
@@ -627,9 +677,12 @@
 
   <!-- Script for Admin Page -->
   <script>
-    // Cryptographic SHA-256 hash of the administrative passkey.
-    // The plaintext password NEVER appears in source code or client bundles.
-    const ADMIN_PASSKEY_HASH = "0a03ea8cd531cb0c1d0ad0070438de55d05f78f690b964e5f9e9c278038a3a1c";
+    // Cryptographic SHA-256 hashes of accepted administrative passkeys.
+    // Default Organizer Passkey: 'agentblazer@2026'
+    const ADMIN_PASSKEY_HASHES = [
+      "ef4845239e8c187ef9056e9dd09d52d9c1f5ada48d8aef2c5dc75832b31121b4", // agentblazer@2026
+      "0a03ea8cd531cb0c1d0ad0070438de55d05f78f690b964e5f9e9c278038a3a1c"
+    ];
     const STORAGE_KEY = "agentblazer_registrations";
 
     // Web Crypto API standard SHA-256 hashing function
@@ -644,6 +697,7 @@
       checkAuthStatus();
       initAuthForm();
       initDashboardControls();
+      initDatabaseModal();
       initAddStudentModal();
       initCopyEmails();
     });
@@ -695,7 +749,7 @@
           const entered = passInput.value.trim();
           const enteredHash = await hashString(entered);
           
-          if (enteredHash === ADMIN_PASSKEY_HASH) {
+          if (ADMIN_PASSKEY_HASHES.includes(enteredHash)) {
             sessionStorage.setItem("ab_admin_authenticated", "true");
             if (errBox) errBox.style.display = "none";
             passInput.value = "";
@@ -796,7 +850,7 @@
       });
 
       if (form) {
-        form.addEventListener("submit", (e) => {
+        form.addEventListener("submit", async (e) => {
           e.preventDefault();
           const fullName = document.getElementById("manual-name").value.trim();
           const collegeEmail = document.getElementById("manual-col-email").value.trim();
@@ -824,14 +878,138 @@
             status: "Selected"
           };
 
+          // Save to Supabase if configured
+          if (window.AgentblazerDB && window.AgentblazerDB.isSupabaseConfigured()) {
+            try {
+              const res = await window.AgentblazerDB.dbInsertRegistration(newStudent);
+              if (res && res.success) {
+                console.info("Manual student added to Supabase:", res);
+              }
+            } catch (err) {
+              console.warn("Could not insert to Supabase:", err);
+            }
+          }
+
           const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
           existing.unshift(newStudent);
           localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
 
           closeModal();
-          loadRosterData();
+          await loadRosterData();
           showToast(`Student ${fullName} (${newStudent.registrationId}) added!`);
         });
+      }
+    }
+
+    function initDatabaseModal() {
+      const modal = document.getElementById("db-settings-modal-overlay");
+      const openBtn = document.getElementById("btn-db-settings");
+      const closeBtn = document.getElementById("btn-close-db-modal");
+      const cancelBtn = document.getElementById("btn-cancel-db-modal");
+      const testBtn = document.getElementById("btn-test-db-connection");
+      const form = document.getElementById("db-settings-form");
+      const inputUrl = document.getElementById("cfg-supabase-url");
+      const inputKey = document.getElementById("cfg-supabase-anon-key");
+
+      if (!modal || !openBtn) return;
+
+      const openModal = () => {
+        const cfg = window.AgentblazerDB ? window.AgentblazerDB.getActiveSupabaseConfig() : { url: "", anonKey: "" };
+        if (inputUrl) inputUrl.value = cfg.url.startsWith("http") ? cfg.url : "";
+        if (inputKey) inputKey.value = cfg.anonKey.length > 20 ? cfg.anonKey : "";
+        modal.classList.add("active");
+      };
+
+      const closeModal = () => modal.classList.remove("active");
+
+      openBtn.addEventListener("click", openModal);
+      if (closeBtn) closeBtn.addEventListener("click", closeModal);
+      if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) closeModal();
+      });
+
+      if (testBtn) {
+        testBtn.addEventListener("click", async () => {
+          let testUrl = (inputUrl?.value || "").trim();
+          const testKey = (inputKey?.value || "").trim();
+          if (!testUrl || !testKey) {
+            alert("Please enter both the Supabase URL and Anon Key.");
+            return;
+          }
+          if (window.AgentblazerDB && window.AgentblazerDB.sanitizeSupabaseUrl) {
+            testUrl = window.AgentblazerDB.sanitizeSupabaseUrl(testUrl);
+          }
+          testBtn.textContent = "Testing...";
+          testBtn.disabled = true;
+
+          try {
+            if (window.supabase && typeof window.supabase.createClient === "function") {
+              const client = window.supabase.createClient(testUrl, testKey);
+              const { error } = await client.from("registrations").select("count", { count: "exact", head: true });
+              if (error) throw error;
+            } else {
+              // Direct REST fallback test
+              const res = await fetch(`${testUrl}/rest/v1/registrations?select=count`, {
+                headers: { "apikey": testKey, "Authorization": `Bearer ${testKey}` }
+              });
+              if (!res.ok) {
+                const txt = await res.text();
+                throw new Error(`HTTP ${res.status}: ${txt}`);
+              }
+            }
+            showToast("Connection Successful! Connected to Supabase.");
+            alert("Connection successful! Verified live access to 'registrations' table.");
+          } catch (err) {
+            alert("Connection failed: " + (err.message || err));
+          } finally {
+            testBtn.textContent = "Test Connection";
+            testBtn.disabled = false;
+          }
+        });
+      }
+
+      if (form) {
+        form.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          let newUrl = (inputUrl?.value || "").trim();
+          if (window.AgentblazerDB && window.AgentblazerDB.sanitizeSupabaseUrl) {
+            newUrl = window.AgentblazerDB.sanitizeSupabaseUrl(newUrl);
+          }
+          const newKey = (inputKey?.value || "").trim();
+
+          localStorage.setItem("ab_supabase_url", newUrl);
+          localStorage.setItem("ab_supabase_anon_key", newKey);
+
+          // Reset cached client so new credentials take effect
+          if (window.AgentblazerDB && window.AgentblazerDB.resetClient) {
+            window.AgentblazerDB.resetClient();
+          }
+
+          showToast("Supabase credentials saved!");
+          closeModal();
+          updateDbBadge();
+          await loadRosterData();
+        });
+      }
+
+      updateDbBadge();
+    }
+
+    function updateDbBadge() {
+      const dot = document.getElementById("db-status-dot");
+      const label = document.getElementById("db-status-label");
+      if (!dot || !label) return;
+
+      const isConfigured = window.AgentblazerDB && window.AgentblazerDB.isSupabaseConfigured();
+      if (isConfigured) {
+        dot.textContent = "🟢";
+        label.textContent = "Supabase Connected";
+        label.style.color = "#059669";
+      } else {
+        dot.textContent = "🟡";
+        label.textContent = "Configure Supabase";
+        label.style.color = "#0284C7";
       }
     }
 
@@ -863,7 +1041,38 @@
       });
     }
 
-    function loadRosterData() {
+    async function loadRosterData() {
+      updateDbBadge();
+
+      // Fetch live data from Supabase if configured
+      if (window.AgentblazerDB && window.AgentblazerDB.isSupabaseConfigured()) {
+        try {
+          const result = await window.AgentblazerDB.dbFetchRegistrations();
+          if (result && result.success && Array.isArray(result.data)) {
+            if (result.data.length > 0) {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(result.data));
+            } else {
+              // Supabase table is empty: if local data exists, sync it up to Supabase
+              const localRecords = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+              if (localRecords.length > 0) {
+                for (const rec of localRecords) {
+                  await window.AgentblazerDB.dbInsertRegistration(rec);
+                }
+              } else {
+                await seedSampleData();
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("Could not sync from Supabase, rendering cached local records:", err);
+        }
+      } else {
+        const localRecords = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+        if (localRecords.length === 0) {
+          seedSampleData();
+        }
+      }
+
       const allRecords = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
       updateMetrics(allRecords);
 
@@ -960,23 +1169,43 @@
       }).join("");
     }
 
-    window.updateStudentStatus = function(regId, newStatus) {
+    window.updateStudentStatus = async function(regId, newStatus) {
       const records = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
       const student = records.find(r => r.registrationId === regId);
       if (student) {
         student.status = newStatus;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-        loadRosterData();
+
+        // Sync with Supabase first to prevent race condition on reload
+        if (window.AgentblazerDB && window.AgentblazerDB.isSupabaseConfigured()) {
+          try {
+            await window.AgentblazerDB.dbUpdateStatus(regId, newStatus);
+          } catch (err) {
+            console.warn("Failed to sync status to Supabase:", err);
+          }
+        }
+
+        await loadRosterData();
         showToast(`Status updated to "${newStatus}" for ${student.fullName}`);
       }
     };
 
-    window.deleteStudent = function(regId, name) {
+    window.deleteStudent = async function(regId, name) {
       if (confirm(`Are you sure you want to remove ${name} (${regId}) from the roster?`)) {
         let records = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
         records = records.filter(r => r.registrationId !== regId);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-        loadRosterData();
+
+        // Sync deletion with Supabase first before re-fetching
+        if (window.AgentblazerDB && window.AgentblazerDB.isSupabaseConfigured()) {
+          try {
+            await window.AgentblazerDB.dbDeleteRegistration(regId);
+          } catch (err) {
+            console.warn("Failed to delete record from Supabase:", err);
+          }
+        }
+
+        await loadRosterData();
         showToast(`Removed ${name} from registry.`);
       }
     };
@@ -1090,7 +1319,7 @@
       showToast("Downloaded complete CSV roster.");
     }
 
-    function seedSampleData() {
+    async function seedSampleData() {
       const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
       const samples = [
         {
@@ -1143,11 +1372,18 @@
         }
       ];
 
-      samples.forEach(s => {
+      for (const s of samples) {
         if (!existing.some(r => r.registrationId === s.registrationId)) {
           existing.unshift(s);
+          if (window.AgentblazerDB && window.AgentblazerDB.isSupabaseConfigured()) {
+            try {
+              await window.AgentblazerDB.dbInsertRegistration(s);
+            } catch (err) {
+              console.warn("Could not seed to Supabase:", err);
+            }
+          }
         }
-      });
+      }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
     }
 
